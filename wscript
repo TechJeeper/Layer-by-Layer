@@ -15,6 +15,9 @@ def options(ctx):
 
 def configure(ctx):
     ctx.load('pebble_sdk')
+    # CloudPebble may bundle JS before build(); keep config_page.js in the repo
+    # and refresh it here whenever configure runs.
+    embed_config_page(ctx)
 
 
 def embed_config_page(ctx):
