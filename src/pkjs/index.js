@@ -1,7 +1,9 @@
 // Layer-by-Layer phone side: opens the settings page and pushes options to the watch.
+//
+// CloudPebble's emulator opens a blank about:blank for data: config URLs, so we
+// serve the page over HTTPS from the GitHub repo (jsDelivr CDN).
 
-var keys = require('message_keys');
-var configPage = require('./config_page');
+var CONFIG_URL = 'https://cdn.jsdelivr.net/gh/TechJeeper/Layer-by-Layer@main/config/index.html';
 
 var STORE_KEY = 'lbl.settings';
 
@@ -14,14 +16,21 @@ var defaults = {
   dropAnim: true
 };
 
+function merge(a, b) {
+  var o = {}, k;
+  for (k in a) o[k] = a[k];
+  for (k in b || {}) o[k] = b[k];
+  return o;
+}
+
 function load() {
   try {
     var raw = localStorage.getItem(STORE_KEY);
     if (raw) {
-      return Object.assign({}, defaults, JSON.parse(raw));
+      return merge(defaults, JSON.parse(raw));
     }
   } catch (e) {}
-  return Object.assign({}, defaults);
+  return merge(defaults, {});
 }
 
 function save(cfg) {
@@ -42,13 +51,9 @@ function sendSettings(cfg) {
 }
 
 function configUrl(cfg) {
-  var json = JSON.stringify(cfg).replace(/</g, '\\u003c');
-  var returnTo = Pebble.platform === 'pypkjs' ? '$$$RETURN_TO$$$' : 'pebblejs://close#';
-  var html = configPage
-    .replace('"__LAYER_STATE__"', function () { return json; })
-    .replace('__LAYER_STATE__', function () { return json; })
-    .replace('__RETURN_TO__', function () { return returnTo; });
-  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+  // Cache-bust so CloudPebble picks up HTML changes after a push.
+  return CONFIG_URL +
+    '?v=1.1.1&cfg=' + encodeURIComponent(JSON.stringify(cfg));
 }
 
 function parseResponse(response) {
@@ -76,7 +81,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
   if (!page) {
     return;
   }
-  var cfg = Object.assign({}, defaults, page);
+  var cfg = merge(defaults, page);
   save(cfg);
   sendSettings(cfg);
 });

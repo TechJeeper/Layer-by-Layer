@@ -134,9 +134,8 @@ h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-
 </div></div>
 
 <script>
-var STATE = "__LAYER_STATE__";
-var RETURN_TO = "__RETURN_TO__";
-
+// Standalone settings page. CloudPebble/emulator must open an https URL
+// (data: URLs show up as a blank about:blank window).
 var THEMES = [
   { id: 0, name: "Classic", desc: "Cyan PLA on navy", c: ["#002955","#00ffff","#00aaff","#ff5500"] },
   { id: 1, name: "Forest", desc: "Lime on dark green", c: ["#005500","#55ff00","#00aa55","#aa0000"] },
@@ -154,43 +153,82 @@ var defaults = {
   dropAnim: true
 };
 
+function merge(a, b) {
+  var o = {}, k;
+  for (k in a) o[k] = a[k];
+  for (k in b || {}) o[k] = b[k];
+  return o;
+}
+
+function getQueryParam(name, fallback) {
+  var query = location.search.substring(1).split("&");
+  for (var i = 0; i < query.length; i++) {
+    var pair = query[i].split("=");
+    if (decodeURIComponent(pair[0]) === name) {
+      return decodeURIComponent(pair.slice(1).join("=") || "");
+    }
+  }
+  return fallback;
+}
+
+function parseJson(text) {
+  try { return JSON.parse(text); } catch (e) {
+    try { return JSON.parse(decodeURIComponent(text)); } catch (e2) { return null; }
+  }
+}
+
 function loadState() {
-  if (STATE && typeof STATE === "object") {
-    return Object.assign({}, defaults, STATE);
+  var fromQuery = getQueryParam("cfg", "");
+  if (fromQuery) {
+    var parsed = parseJson(fromQuery);
+    if (parsed) return merge(defaults, parsed);
   }
   try {
     var stored = JSON.parse(localStorage.getItem("lbl.settings") || "null");
-    if (stored) return Object.assign({}, defaults, stored);
+    if (stored) return merge(defaults, stored);
   } catch (e) {}
-  return Object.assign({}, defaults);
+  return merge(defaults, {});
 }
 
+function closest(el, sel) {
+  while (el && el.nodeType === 1) {
+    if (el.matches ? el.matches(sel) : el.msMatchesSelector && el.msMatchesSelector(sel)) return el;
+    el = el.parentNode;
+  }
+  return null;
+}
+
+var RETURN_TO = getQueryParam("return_to", "pebblejs://close#");
 var state = loadState();
 
 function setSeg(id, value) {
   var root = document.getElementById(id);
-  Array.prototype.forEach.call(root.querySelectorAll("button"), function (b) {
-    b.classList.toggle("on", String(b.getAttribute("data-v")) === String(value));
-  });
+  var buttons = root.getElementsByTagName("button");
+  for (var i = 0; i < buttons.length; i++) {
+    var on = String(buttons[i].getAttribute("data-v")) === String(value);
+    buttons[i].className = on ? "on" : "";
+  }
 }
 
 function bindSeg(id, key) {
-  var root = document.getElementById(id);
-  root.addEventListener("click", function (e) {
-    var b = e.target.closest("button");
+  document.getElementById(id).onclick = function (e) {
+    var b = closest(e.target, "button");
     if (!b) return;
     state[key] = parseInt(b.getAttribute("data-v"), 10);
     setSeg(id, state[key]);
-  });
+  };
 }
 
 function renderThemes() {
-  var root = document.getElementById("themes");
-  root.innerHTML = THEMES.map(function (t) {
-    var sw = t.c.map(function (hex) { return "<i style=\"background:" + hex + "\"></i>"; }).join("");
-    return "<button class=\"theme" + (state.theme === t.id ? " on" : "") + "\" data-id=\"" + t.id + "\">" +
+  var html = "";
+  for (var i = 0; i < THEMES.length; i++) {
+    var t = THEMES[i];
+    var sw = "";
+    for (var j = 0; j < t.c.length; j++) sw += "<i style=\"background:" + t.c[j] + "\"></i>";
+    html += "<button type=\"button\" class=\"theme" + (state.theme === t.id ? " on" : "") + "\" data-id=\"" + t.id + "\">" +
       "<div class=\"swatches\">" + sw + "</div><b>" + t.name + "</b><small>" + t.desc + "</small></button>";
-  }).join("");
+  }
+  document.getElementById("themes").innerHTML = html;
 }
 
 function syncDateRow() {
@@ -207,28 +245,31 @@ bindSeg("dateFormat", "dateFormat");
 renderThemes();
 syncDateRow();
 
-document.getElementById("showDate").addEventListener("change", function (e) {
-  state.showDate = e.target.checked;
+document.getElementById("showDate").onchange = function () {
+  state.showDate = this.checked;
   syncDateRow();
-});
-document.getElementById("showProgress").addEventListener("change", function (e) {
-  state.showProgress = e.target.checked;
-});
-document.getElementById("dropAnim").addEventListener("change", function (e) {
-  state.dropAnim = e.target.checked;
-});
-document.getElementById("themes").addEventListener("click", function (e) {
-  var b = e.target.closest(".theme");
+};
+document.getElementById("showProgress").onchange = function () {
+  state.showProgress = this.checked;
+};
+document.getElementById("dropAnim").onchange = function () {
+  state.dropAnim = this.checked;
+};
+document.getElementById("themes").onclick = function (e) {
+  var b = closest(e.target, ".theme");
   if (!b) return;
   state.theme = parseInt(b.getAttribute("data-id"), 10);
   renderThemes();
-});
+};
 
-document.getElementById("save").addEventListener("click", function () {
+document.getElementById("save").onclick = function () {
   try { localStorage.setItem("lbl.settings", JSON.stringify(state)); } catch (e) {}
-  var payload = encodeURIComponent(JSON.stringify(state));
-  document.location = RETURN_TO + payload;
-});
+  if (!RETURN_TO || RETURN_TO.charAt(0) === "_") {
+    alert("Preview only — open settings from the Pebble app or emulator.");
+    return;
+  }
+  document.location = RETURN_TO + encodeURIComponent(JSON.stringify(state));
+};
 </script>
 </body>
 </html>

@@ -1,8 +1,6 @@
 #
 # Layer-by-Layer watchface build script (waf).
-# Embeds config/index.html into the phone-side JS bundle.
 #
-import json
 import os.path
 
 top = '.'
@@ -15,30 +13,10 @@ def options(ctx):
 
 def configure(ctx):
     ctx.load('pebble_sdk')
-    # CloudPebble may bundle JS before build(); keep config_page.js in the repo
-    # and refresh it here whenever configure runs.
-    embed_config_page(ctx)
-
-
-def embed_config_page(ctx):
-    src = ctx.path.find_node('config/index.html')
-    if src is None:
-        if ctx.path.find_node('src/pkjs/config_page.js') is None:
-            ctx.fatal('config/index.html is missing')
-        return
-    text = src.read(encoding='utf-8').lstrip('﻿')
-    lines = [line.strip() for line in text.splitlines()]
-    html = '\n'.join(line for line in lines if line)
-    js = ('// Generated from config/index.html by wscript. Do not edit.\n'
-          'module.exports = ' + json.dumps(html) + ';\n')
-    dst = ctx.path.make_node('src/pkjs/config_page.js')
-    if not os.path.exists(dst.abspath()) or dst.read(encoding='utf-8') != js:
-        dst.write(js, encoding='utf-8')
 
 
 def build(ctx):
     ctx.load('pebble_sdk')
-    embed_config_page(ctx)
 
     binaries = []
     cached_env = ctx.env
