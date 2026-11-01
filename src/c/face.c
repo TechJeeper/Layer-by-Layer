@@ -3,7 +3,11 @@
 
 #define FRAME_MS 100
 #define DROP_MS 800
-#define COLON_GAP 6
+#define MARGIN_X 3
+#define NOZZLE_ROOM 28
+#define BED_H 14
+#define CAPTION_H 20
+#define BOTTOM_PAD 2
 
 typedef enum {
   STATE_PRINTING = 0,
@@ -26,10 +30,11 @@ static int s_cell;           // pixel size of one glyph cell
 static int s_digit_w;
 static int s_digit_h;
 static int s_gap;
+static int s_colon;
 
 static GColor color_bg(void) {
 #if defined(PBL_COLOR)
-  return GColorBlack;
+  return GColorOxfordBlue;
 #else
   return GColorBlack;
 #endif
@@ -43,9 +48,25 @@ static GColor color_filament(void) {
 #endif
 }
 
-static GColor color_nozzle(void) {
+static GColor color_filament_hot(void) {
 #if defined(PBL_COLOR)
-  return GColorOrange;
+  return GColorWhite;
+#else
+  return GColorWhite;
+#endif
+}
+
+static GColor color_heat(void) {
+#if defined(PBL_COLOR)
+  return GColorRed;
+#else
+  return GColorWhite;
+#endif
+}
+
+static GColor color_brass(void) {
+#if defined(PBL_COLOR)
+  return GColorChromeYellow;
 #else
   return GColorWhite;
 #endif
@@ -59,7 +80,7 @@ static GColor color_bed(void) {
 #endif
 }
 
-static GColor color_rail(void) {
+static GColor color_bed_surface(void) {
 #if defined(PBL_COLOR)
   return GColorLightGray;
 #else
@@ -67,36 +88,69 @@ static GColor color_rail(void) {
 #endif
 }
 
-static GColor color_dim(void) {
+static GColor color_rail(void) {
 #if defined(PBL_COLOR)
-  return GColorDarkGray;
+  return GColorPictonBlue;
 #else
   return GColorWhite;
 #endif
 }
 
+static GColor color_crossbar(void) {
+#if defined(PBL_COLOR)
+  return GColorBlueMoon;
+#else
+  return GColorWhite;
+#endif
+}
+
+static GColor color_caption(void) {
+#if defined(PBL_COLOR)
+  return GColorMintGreen;
+#else
+  return GColorWhite;
+#endif
+}
+
+// Width of HH:MM block for a given cell/gap/colon size.
+static int block_width_for(int cell, int gap, int colon) {
+  return 4 * DIGIT_COLS * cell + 3 * gap + colon;
+}
+
 static void layout_metrics(GRect bounds) {
-  // Scale glyphs so four digits + colon fit with side margins.
-  int usable = bounds.size.w - 16;
-  int cell = usable / (4 * DIGIT_COLS + 3);
-  if (cell < 2) {
-    cell = 2;
+  int usable_w = bounds.size.w - MARGIN_X * 2;
+  int usable_h = bounds.size.h - NOZZLE_ROOM - BED_H - CAPTION_H - BOTTOM_PAD;
+
+  // Pick the largest cell that fits both axes.
+  int cell = 2;
+  for (int c = 12; c >= 2; c--) {
+    int gap = (c + 1) / 2;
+    if (gap < 2) {
+      gap = 2;
+    }
+    int colon = c;
+    if (block_width_for(c, gap, colon) > usable_w) {
+      continue;
+    }
+    if (DIGIT_ROWS * c > usable_h) {
+      continue;
+    }
+    cell = c;
+    break;
   }
-  if (cell > 5) {
-    cell = 5;
-  }
-  // Prefer taller digits on tall screens (Time 2 / Duo).
-  if (bounds.size.h >= 200 && cell < 4) {
-    cell = 4;
-  }
+
   s_cell = cell;
+  s_gap = (cell + 1) / 2;
+  if (s_gap < 2) {
+    s_gap = 2;
+  }
+  s_colon = cell;
   s_digit_w = DIGIT_COLS * cell;
   s_digit_h = DIGIT_ROWS * cell;
-  s_gap = cell;
 }
 
 static int time_block_width(void) {
-  return 4 * s_digit_w + 3 * s_gap + COLON_GAP;
+  return block_width_for(s_cell, s_gap, s_colon);
 }
 
 static void digits_from_time(int hour, int minute, int out[4]) {
@@ -180,7 +234,7 @@ static void draw_time_block(GContext *ctx, GPoint origin, int hour, int minute,
   for (int i = 0; i < 4; i++) {
     if (i == 2) {
       draw_colon(ctx, GPoint(x, origin.y), rows_from_bottom, y_offset, color);
-      x += s_cell + COLON_GAP;
+      x += s_colon + s_gap;
     }
     draw_glyph_rows(ctx, GPoint(x, origin.y), d[i], rows_from_bottom, y_offset, color);
     x += s_digit_w + s_gap;
@@ -188,53 +242,86 @@ static void draw_time_block(GContext *ctx, GPoint origin, int hour, int minute,
 }
 
 static void draw_bed(GContext *ctx, GRect bed) {
+  // Heater plate body
   graphics_context_set_fill_color(ctx, color_bed());
   graphics_fill_rect(ctx, bed, 2, GCornersAll);
+
+  // Print surface strip
+  graphics_context_set_fill_color(ctx, color_bed_surface());
+  graphics_fill_rect(ctx,
+      GRect(bed.origin.x + 2, bed.origin.y + 2, bed.size.w - 4, bed.size.h / 2), 0, GCornerNone);
 
   graphics_context_set_stroke_color(ctx, color_rail());
   graphics_context_set_stroke_width(ctx, 1);
   graphics_draw_rect(ctx, bed);
 
-  // Corner clips
-  graphics_context_set_fill_color(ctx, color_rail());
-  int c = 3;
+  // Orange corner clips
+  graphics_context_set_fill_color(ctx, color_brass());
+  int c = 4;
   graphics_fill_rect(ctx, GRect(bed.origin.x - 1, bed.origin.y - 1, c, c), 0, GCornerNone);
   graphics_fill_rect(ctx, GRect(bed.origin.x + bed.size.w - c + 1, bed.origin.y - 1, c, c), 0, GCornerNone);
   graphics_fill_rect(ctx, GRect(bed.origin.x - 1, bed.origin.y + bed.size.h - c + 1, c, c), 0, GCornerNone);
   graphics_fill_rect(ctx, GRect(bed.origin.x + bed.size.w - c + 1, bed.origin.y + bed.size.h - c + 1, c, c), 0, GCornerNone);
 
-#if defined(PBL_COLOR)
   // Heater glow under the plate
-  graphics_context_set_fill_color(ctx, GColorDarkCandyAppleRed);
+  graphics_context_set_fill_color(ctx, color_heat());
   graphics_fill_rect(ctx,
-      GRect(bed.origin.x + 4, bed.origin.y + bed.size.h - 1, bed.size.w - 8, 2), 0, GCornerNone);
-#endif
+      GRect(bed.origin.x + 6, bed.origin.y + bed.size.h - 2, bed.size.w - 12, 3), 0, GCornerNone);
 }
 
 static void draw_nozzle(GContext *ctx, GPoint tip) {
-  // tip is the extrusion point (bottom center of the nozzle).
-  GColor body = color_nozzle();
-  graphics_context_set_fill_color(ctx, body);
+  // tip is the extrusion point (bottom center). Scales with digit cell size.
+  int s = s_cell >= 6 ? 2 : 1;
+  int tip_h = 5 * s;
+  int block_w = 9 * s;
+  int block_h = 5 * s;
+  int fin_w = 11 * s;
+  int fin_n = 3;
 
   // Brass tip (triangle pointing down)
-  for (int i = 0; i < 5; i++) {
-    int half = i / 2;
-    graphics_fill_rect(ctx, GRect(tip.x - half, tip.y - 5 + i, half * 2 + 1, 1), 0, GCornerNone);
+  graphics_context_set_fill_color(ctx, color_brass());
+  for (int i = 0; i < tip_h; i++) {
+    int half = (i * (block_w / 2)) / tip_h;
+    graphics_fill_rect(ctx, GRect(tip.x - half, tip.y - tip_h + i, half * 2 + 1, 1), 0, GCornerNone);
   }
-  // Heat block
-  graphics_fill_rect(ctx, GRect(tip.x - 4, tip.y - 11, 9, 5), 0, GCornerNone);
 
-#if defined(PBL_COLOR)
-  graphics_context_set_fill_color(ctx, GColorLightGray);
-#else
-  graphics_context_set_fill_color(ctx, GColorWhite);
-#endif
-  // Heat sink fins
-  for (int i = 0; i < 3; i++) {
-    graphics_fill_rect(ctx, GRect(tip.x - 5, tip.y - 18 + i * 2, 11, 1), 0, GCornerNone);
+  // Red heat block
+  graphics_context_set_fill_color(ctx, color_heat());
+  graphics_fill_rect(ctx,
+      GRect(tip.x - block_w / 2, tip.y - tip_h - block_h, block_w, block_h), 0, GCornerNone);
+
+  // Silver heat-sink fins
+  graphics_context_set_fill_color(ctx, color_bed_surface());
+  int fin_y0 = tip.y - tip_h - block_h - fin_n * 2 * s;
+  for (int i = 0; i < fin_n; i++) {
+    graphics_fill_rect(ctx,
+        GRect(tip.x - fin_w / 2, fin_y0 + i * 2 * s, fin_w, s), 0, GCornerNone);
   }
-  // Filament path
-  graphics_fill_rect(ctx, GRect(tip.x, tip.y - 22, 1, 4), 0, GCornerNone);
+
+  // Cyan filament path into the hotend
+  graphics_context_set_fill_color(ctx, color_filament());
+  graphics_fill_rect(ctx, GRect(tip.x - s / 2, fin_y0 - 5 * s, s > 0 ? s : 1, 5 * s), 0, GCornerNone);
+}
+
+static void draw_gantry(GContext *ctx, GRect bed, int top_y) {
+  int rail_w = s_cell >= 6 ? 3 : 2;
+
+  // Vertical rails
+  graphics_context_set_fill_color(ctx, color_rail());
+  graphics_fill_rect(ctx, GRect(bed.origin.x, top_y, rail_w, bed.origin.y - top_y), 0, GCornerNone);
+  graphics_fill_rect(ctx,
+      GRect(bed.origin.x + bed.size.w - rail_w, top_y, rail_w, bed.origin.y - top_y), 0, GCornerNone);
+
+  // Top crossbar
+  graphics_context_set_fill_color(ctx, color_crossbar());
+  graphics_fill_rect(ctx, GRect(bed.origin.x, top_y, bed.size.w, rail_w + 1), 0, GCornerNone);
+
+  // Endstop / LED accents
+  graphics_context_set_fill_color(ctx, color_filament());
+  graphics_fill_rect(ctx, GRect(bed.origin.x + rail_w + 2, top_y + 1, 3, 3), 0, GCornerNone);
+  graphics_context_set_fill_color(ctx, color_heat());
+  graphics_fill_rect(ctx,
+      GRect(bed.origin.x + bed.size.w - rail_w - 5, top_y + 1, 3, 3), 0, GCornerNone);
 }
 
 static void draw_frame(Layer *layer, GContext *ctx) {
@@ -245,24 +332,28 @@ static void draw_frame(Layer *layer, GContext *ctx) {
   graphics_fill_rect(ctx, bounds, 0, GCornerNone);
 
   int block_w = time_block_width();
-  int bed_w = block_w + 16;
-  int bed_h = 10;
-  int bed_x = (bounds.size.w - bed_w) / 2;
-  int bed_y = bounds.size.h / 2 + s_digit_h / 2 + 4;
-  if (bed_y + bed_h + 24 > bounds.size.h) {
-    bed_y = bounds.size.h - bed_h - 28;
+  int bed_w = bounds.size.w - MARGIN_X * 2;
+  if (bed_w < block_w + 8) {
+    bed_w = block_w + 8;
   }
+  int bed_h = BED_H;
+  int bed_x = (bounds.size.w - bed_w) / 2;
+
+  // Pack the printer toward the vertical center, using the large digit block.
+  int assembly_h = NOZZLE_ROOM + s_digit_h + 2 + bed_h + CAPTION_H;
+  int assembly_top = (bounds.size.h - assembly_h) / 2;
+  if (assembly_top < 2) {
+    assembly_top = 2;
+  }
+  int bed_y = assembly_top + NOZZLE_ROOM + s_digit_h + 2;
   GRect bed = GRect(bed_x, bed_y, bed_w, bed_h);
 
   int digit_x = bed_x + (bed_w - block_w) / 2;
   int digit_y = bed_y - s_digit_h - 2;
+  int gantry_top = assembly_top;
 
+  draw_gantry(ctx, bed, gantry_top);
   draw_bed(ctx, bed);
-
-  // Vertical gantry rails
-  graphics_context_set_stroke_color(ctx, color_dim());
-  graphics_draw_line(ctx, GPoint(bed_x, 8), GPoint(bed_x, bed_y));
-  graphics_draw_line(ctx, GPoint(bed_x + bed_w - 1, 8), GPoint(bed_x + bed_w - 1, bed_y));
 
   int progress_pm;
   int rows;
@@ -315,17 +406,18 @@ static void draw_frame(Layer *layer, GContext *ctx) {
     int ny = digit_y + glyph_row_from_top * s_cell;
     draw_nozzle(ctx, GPoint(nx, ny));
 
-    // Small extruded bead under the tip
-    graphics_context_set_fill_color(ctx, color_filament());
-    int bh = s_cell > 1 ? s_cell / 2 : 1;
-    graphics_fill_rect(ctx, GRect(nx - 1, ny, 3, bh), 0, GCornerNone);
+    // Hot filament bead under the tip
+    graphics_context_set_fill_color(ctx, color_filament_hot());
+    int bh = s_cell > 2 ? s_cell / 2 : 1;
+    int bw = s_cell > 2 ? s_cell : 3;
+    graphics_fill_rect(ctx, GRect(nx - bw / 2, ny, bw, bh), 0, GCornerNone);
   } else if (show_nozzle) {
     // Finished print: park the nozzle at the top-right of the build.
     draw_nozzle(ctx, GPoint(digit_x + block_w, digit_y));
   }
 
   // Caption under the bed
-  graphics_context_set_text_color(ctx, color_dim());
+  graphics_context_set_text_color(ctx, color_caption());
   char caption[32];
   if (s_state == STATE_DROPPING) {
     snprintf(caption, sizeof(caption), "removing part");
@@ -333,8 +425,8 @@ static void draw_frame(Layer *layer, GContext *ctx) {
     int pct = (progress_pm + 5) / 10;
     snprintf(caption, sizeof(caption), "layer %d/%d  %d%%", rows, DIGIT_ROWS, pct);
   }
-  GRect cap = GRect(0, bed_y + bed_h + 4, bounds.size.w, 18);
-  graphics_draw_text(ctx, caption, fonts_get_system_font(FONT_KEY_GOTHIC_14),
+  GRect cap = GRect(0, bed_y + bed_h + 2, bounds.size.w, CAPTION_H);
+  graphics_draw_text(ctx, caption, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
                      cap, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
