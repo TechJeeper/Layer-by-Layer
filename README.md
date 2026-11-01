@@ -42,3 +42,13 @@ Put it on the watch by opening the `.pbw` in the Pebble app, or:
 - At the minute boundary the old digits fall away (~0.8 s), then the new time
   starts from an empty bed.
 - Frames update every 100 ms while the watchface is open.
+
+## Settings
+
+Open **Layer-by-Layer → Settings** in the Pebble phone app:
+
+- **Time format** — System, 12-hour, or 24-hour
+- **Date** — show/hide and format (Sun 1 Nov, 11/1, or ISO)
+- **Layer progress** — show/hide the `layer n/7` caption
+- **Drop animation** — old digits fall off when the minute changes
+- **Colors** — Classic, Forest, Ember, Violet, or Mono (color watches)

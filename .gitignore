@@ -3,3 +3,5 @@ dist/
 .lock-waf*
 node_modules/
 __pycache__/
+# Generated from config/index.html by wscript on every build
+src/pkjs/config_page.js

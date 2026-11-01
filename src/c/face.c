@@ -1,11 +1,13 @@
 #include "face.h"
 #include "digits.h"
+#include "settings.h"
 
 #define FRAME_MS 100
 #define DROP_MS 800
 #define MARGIN_X 3
 #define BED_H 14
 #define CAPTION_H 20
+#define DATE_H 18
 #define BOTTOM_PAD 2
 
 typedef enum {
@@ -31,77 +33,16 @@ static int s_digit_h;
 static int s_gap;
 static int s_colon;
 
-static GColor color_bg(void) {
-#if defined(PBL_COLOR)
-  return GColorOxfordBlue;
-#else
-  return GColorBlack;
-#endif
-}
-
-static GColor color_filament(void) {
-#if defined(PBL_COLOR)
-  return GColorCyan;
-#else
-  return GColorWhite;
-#endif
-}
-
-static GColor color_heat(void) {
-#if defined(PBL_COLOR)
-  return GColorRed;
-#else
-  return GColorWhite;
-#endif
-}
-
-static GColor color_brass(void) {
-#if defined(PBL_COLOR)
-  return GColorChromeYellow;
-#else
-  return GColorWhite;
-#endif
-}
-
-static GColor color_bed(void) {
-#if defined(PBL_COLOR)
-  return GColorDarkGray;
-#else
-  return GColorBlack;
-#endif
-}
-
-static GColor color_bed_surface(void) {
-#if defined(PBL_COLOR)
-  return GColorLightGray;
-#else
-  return GColorWhite;
-#endif
-}
-
-static GColor color_rail(void) {
-#if defined(PBL_COLOR)
-  return GColorPictonBlue;
-#else
-  return GColorWhite;
-#endif
-}
-
-static GColor color_crossbar(void) {
-#if defined(PBL_COLOR)
-  return GColorBlueMoon;
-#else
-  return GColorWhite;
-#endif
-}
-
-static GColor color_caption(void) {
-#if defined(PBL_COLOR)
-  return GColorMintGreen;
-#else
-  return GColorWhite;
-#endif
-}
+static GColor color_bg(void) { return settings_color_bg(); }
+static GColor color_filament(void) { return settings_color_filament(); }
+static GColor color_heat(void) { return settings_color_heat(); }
+static GColor color_brass(void) { return settings_color_brass(); }
+static GColor color_bed(void) { return settings_color_bed(); }
+static GColor color_bed_surface(void) { return settings_color_bed_surface(); }
+static GColor color_rail(void) { return settings_color_rail(); }
+static GColor color_crossbar(void) { return settings_color_crossbar(); }
+static GColor color_caption(void) { return settings_color_caption(); }
+static GColor color_date(void) { return settings_color_date(); }
 
 // Width of HH:MM block for a given cell/gap/colon size.
 static int block_width_for(int cell, int gap, int colon) {
@@ -118,8 +59,19 @@ static int nozzle_stack_h(void) {
   return 5 * s + 5 * s + 6 * s + 5 * s;
 }
 
+static int footer_h(void) {
+  const FaceSettings *s = settings_get();
+  return s->show_progress ? CAPTION_H : 4;
+}
+
+static int header_h(void) {
+  const FaceSettings *s = settings_get();
+  return s->show_date ? DATE_H : 0;
+}
+
 static void layout_metrics(GRect bounds) {
   int usable_w = bounds.size.w - MARGIN_X * 2;
+  int chrome = header_h() + footer_h() + BOTTOM_PAD;
 
   // Pick the largest cell that fits both axes.
   int cell = 2;
@@ -130,7 +82,7 @@ static void layout_metrics(GRect bounds) {
     }
     int colon = c;
     int nroom = (c >= 6) ? 44 : 28;
-    int hfit = bounds.size.h - nroom - BED_H - CAPTION_H - BOTTOM_PAD;
+    int hfit = bounds.size.h - nroom - BED_H - chrome;
     if (block_width_for(c, gap, colon) > usable_w) {
       continue;
     }
@@ -156,7 +108,7 @@ static int time_block_width(void) {
 }
 
 static void digits_from_time(int hour, int minute, int out[4]) {
-  if (!clock_is_24h_style()) {
+  if (settings_use_12h()) {
     hour = hour % 12;
     if (hour == 0) {
       hour = 12;
@@ -166,6 +118,26 @@ static void digits_from_time(int hour, int minute, int out[4]) {
   out[1] = hour % 10;
   out[2] = minute / 10;
   out[3] = minute % 10;
+}
+
+static void format_date(char *buf, size_t n, struct tm *t) {
+  static const char *DOW[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+  static const char *MON[] = {
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+  };
+  switch (settings_get()->date_format) {
+    case DATE_FMT_MD:
+      snprintf(buf, n, "%d/%d", t->tm_mon + 1, t->tm_mday);
+      break;
+    case DATE_FMT_ISO:
+      snprintf(buf, n, "%04d-%02d-%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+      break;
+    case DATE_FMT_DOW_DM:
+    default:
+      snprintf(buf, n, "%s %d %s", DOW[t->tm_wday], t->tm_mday, MON[t->tm_mon]);
+      break;
+  }
 }
 
 // Progress through the current minute in permille: 0 at :00, 1000 near :59.9
@@ -425,18 +397,32 @@ static void draw_frame(Layer *layer, GContext *ctx) {
   int bed_h = BED_H;
   int bed_x = (bounds.size.w - bed_w) / 2;
 
+  const FaceSettings *cfg = settings_get();
+  int head = header_h();
+  int foot = footer_h();
   int nozzle_room = nozzle_stack_h() + 6;
-  int assembly_h = nozzle_room + s_digit_h + 2 + bed_h + CAPTION_H;
+  int assembly_h = head + nozzle_room + s_digit_h + 2 + bed_h + foot;
   int assembly_top = (bounds.size.h - assembly_h) / 2;
   if (assembly_top < 2) {
     assembly_top = 2;
   }
-  int bed_y = assembly_top + nozzle_room + s_digit_h + 2;
+  int gantry_top = assembly_top + head;
+  int bed_y = gantry_top + nozzle_room + s_digit_h + 2;
   GRect bed = GRect(bed_x, bed_y, bed_w, bed_h);
 
   int digit_x = bed_x + (bed_w - block_w) / 2;
   int digit_y = bed_y - s_digit_h - 2;
-  int gantry_top = assembly_top;
+
+  if (cfg->show_date) {
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char datebuf[32];
+    format_date(datebuf, sizeof(datebuf), t);
+    graphics_context_set_text_color(ctx, color_date());
+    graphics_draw_text(ctx, datebuf, fonts_get_system_font(FONT_KEY_GOTHIC_14),
+                       GRect(0, assembly_top - 2, bounds.size.w, DATE_H),
+                       GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+  }
 
   draw_frame_rails(ctx, bed, gantry_top);
   draw_bed(ctx, bed);
@@ -453,7 +439,7 @@ static void draw_frame(Layer *layer, GContext *ctx) {
   int nx = digit_x + block_w;
   int ny = digit_y;
 
-  if (s_state == STATE_DROPPING) {
+  if (s_state == STATE_DROPPING && cfg->drop_anim) {
     progress_pm = 1000;
     complete_rows = DIGIT_ROWS;
     hour = s_drop_hour;
@@ -465,6 +451,10 @@ static void draw_frame(Layer *layer, GContext *ctx) {
     y_off = (t * t / DROP_MS) * (bounds.size.h - digit_y) / DROP_MS;
     show_nozzle = false;
   } else {
+    if (s_state == STATE_DROPPING) {
+      // Drop disabled: snap straight to the new minute.
+      s_state = STATE_PRINTING;
+    }
     progress_pm = print_progress_pm();
     complete_rows = progress_pm * DIGIT_ROWS / 1000;
     if (complete_rows > DIGIT_ROWS) {
@@ -501,18 +491,20 @@ static void draw_frame(Layer *layer, GContext *ctx) {
     draw_nozzle(ctx, tip);
   }
 
-  graphics_context_set_text_color(ctx, color_caption());
-  char caption[32];
-  if (s_state == STATE_DROPPING) {
-    snprintf(caption, sizeof(caption), "removing part");
-  } else {
-    int pct = (progress_pm + 5) / 10;
-    int layer_shown = complete_rows < DIGIT_ROWS ? complete_rows + 1 : DIGIT_ROWS;
-    snprintf(caption, sizeof(caption), "layer %d/%d  %d%%", layer_shown, DIGIT_ROWS, pct);
+  if (cfg->show_progress) {
+    graphics_context_set_text_color(ctx, color_caption());
+    char caption[32];
+    if (s_state == STATE_DROPPING && cfg->drop_anim) {
+      snprintf(caption, sizeof(caption), "removing part");
+    } else {
+      int pct = (progress_pm + 5) / 10;
+      int layer_shown = complete_rows < DIGIT_ROWS ? complete_rows + 1 : DIGIT_ROWS;
+      snprintf(caption, sizeof(caption), "layer %d/%d  %d%%", layer_shown, DIGIT_ROWS, pct);
+    }
+    GRect cap = GRect(0, bed_y + bed_h + 2, bounds.size.w, CAPTION_H);
+    graphics_draw_text(ctx, caption, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
+                       cap, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
   }
-  GRect cap = GRect(0, bed_y + bed_h + 2, bounds.size.w, CAPTION_H);
-  graphics_draw_text(ctx, caption, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
-                     cap, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
 static void schedule_frame(void);
@@ -536,10 +528,14 @@ static void on_frame(void *context) {
       s_phase = 0;
     }
   } else if (minute != s_minute || hour != s_hour) {
-    s_state = STATE_DROPPING;
-    s_drop_ms = 0;
-    s_drop_hour = s_hour;
-    s_drop_minute = s_minute;
+    if (settings_get()->drop_anim) {
+      s_state = STATE_DROPPING;
+      s_drop_ms = 0;
+      s_drop_hour = s_hour;
+      s_drop_minute = s_minute;
+    } else {
+      s_state = STATE_PRINTING;
+    }
     s_hour = hour;
     s_minute = minute;
     s_second = second;
@@ -572,10 +568,12 @@ void face_tick(void) {
   struct tm *t = localtime(&now);
   if (s_state == STATE_PRINTING) {
     if (t->tm_min != s_minute || t->tm_hour != s_hour) {
-      s_state = STATE_DROPPING;
-      s_drop_ms = 0;
-      s_drop_hour = s_hour;
-      s_drop_minute = s_minute;
+      if (settings_get()->drop_anim) {
+        s_state = STATE_DROPPING;
+        s_drop_ms = 0;
+        s_drop_hour = s_hour;
+        s_drop_minute = s_minute;
+      }
     }
     s_hour = t->tm_hour;
     s_minute = t->tm_min;
@@ -583,6 +581,15 @@ void face_tick(void) {
     s_phase = 0;
   }
   layer_mark_dirty(s_layer);
+}
+
+void face_settings_changed(void) {
+  if (s_window) {
+    window_set_background_color(s_window, color_bg());
+  }
+  if (s_layer) {
+    layer_mark_dirty(s_layer);
+  }
 }
 
 void face_init(Window *window) {
