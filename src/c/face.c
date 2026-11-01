@@ -4,7 +4,6 @@
 #define FRAME_MS 100
 #define DROP_MS 800
 #define MARGIN_X 3
-#define NOZZLE_ROOM 28
 #define BED_H 14
 #define CAPTION_H 20
 #define BOTTOM_PAD 2
@@ -43,14 +42,6 @@ static GColor color_bg(void) {
 static GColor color_filament(void) {
 #if defined(PBL_COLOR)
   return GColorCyan;
-#else
-  return GColorWhite;
-#endif
-}
-
-static GColor color_filament_hot(void) {
-#if defined(PBL_COLOR)
-  return GColorWhite;
 #else
   return GColorWhite;
 #endif
@@ -117,9 +108,18 @@ static int block_width_for(int cell, int gap, int colon) {
   return 4 * DIGIT_COLS * cell + 3 * gap + colon;
 }
 
+static int nozzle_scale(void) {
+  return s_cell >= 6 ? 2 : 1;
+}
+
+static int nozzle_stack_h(void) {
+  int s = nozzle_scale();
+  // tip + heat block + fins + filament lead-in
+  return 5 * s + 5 * s + 6 * s + 5 * s;
+}
+
 static void layout_metrics(GRect bounds) {
   int usable_w = bounds.size.w - MARGIN_X * 2;
-  int usable_h = bounds.size.h - NOZZLE_ROOM - BED_H - CAPTION_H - BOTTOM_PAD;
 
   // Pick the largest cell that fits both axes.
   int cell = 2;
@@ -129,10 +129,12 @@ static void layout_metrics(GRect bounds) {
       gap = 2;
     }
     int colon = c;
+    int nroom = (c >= 6) ? 44 : 28;
+    int hfit = bounds.size.h - nroom - BED_H - CAPTION_H - BOTTOM_PAD;
     if (block_width_for(c, gap, colon) > usable_w) {
       continue;
     }
-    if (DIGIT_ROWS * c > usable_h) {
+    if (DIGIT_ROWS * c > hfit) {
       continue;
     }
     cell = c;
@@ -178,65 +180,95 @@ static int print_progress_pm(void) {
   return pm;
 }
 
-static void draw_glyph_rows(GContext *ctx, GPoint origin, int digit, int rows_from_bottom,
-                            int y_offset, GColor color) {
-  if (digit < 0 || digit > 9 || rows_from_bottom <= 0) {
+// Clip a cell rect to the already-extruded side of the nozzle on the active layer.
+static bool clip_to_frontier(GRect *cell, int frontier_x, bool ltr, bool partial_row) {
+  if (!partial_row) {
+    return true;
+  }
+  if (ltr) {
+    // Printed region is everything left of the nozzle.
+    if (cell->origin.x >= frontier_x) {
+      return false;
+    }
+    int right = cell->origin.x + cell->size.w;
+    if (right > frontier_x) {
+      cell->size.w = frontier_x - cell->origin.x;
+    }
+  } else {
+    // Printed region is everything right of the nozzle.
+    int right = cell->origin.x + cell->size.w;
+    if (right <= frontier_x) {
+      return false;
+    }
+    if (cell->origin.x < frontier_x) {
+      cell->size.w = right - frontier_x;
+      cell->origin.x = frontier_x;
+    }
+  }
+  return cell->size.w > 0;
+}
+
+static void draw_glyph_rows(GContext *ctx, GPoint origin, int digit, int complete_rows,
+                            int active_gr, int frontier_x, bool ltr, int y_offset, GColor color) {
+  if (digit < 0 || digit > 9) {
     return;
   }
   graphics_context_set_fill_color(ctx, color);
-  int max_rows = rows_from_bottom;
-  if (max_rows > DIGIT_ROWS) {
-    max_rows = DIGIT_ROWS;
-  }
-  // Glyph row 0 is the top of the digit; we print from the bottom up.
-  for (int gr = DIGIT_ROWS - max_rows; gr < DIGIT_ROWS; gr++) {
+
+  for (int gr = 0; gr < DIGIT_ROWS; gr++) {
+    int from_bottom = DIGIT_ROWS - 1 - gr;
+    bool done = from_bottom < complete_rows;
+    bool active = (gr == active_gr) && complete_rows < DIGIT_ROWS;
+    if (!done && !active) {
+      continue;
+    }
     uint8_t bits = DIGIT_GLYPHS[digit][gr];
     for (int gc = 0; gc < DIGIT_COLS; gc++) {
-      if (bits & (1 << (DIGIT_COLS - 1 - gc))) {
-        int x = origin.x + gc * s_cell;
-        int y = origin.y + gr * s_cell + y_offset;
-        graphics_fill_rect(ctx, GRect(x, y, s_cell, s_cell), 0, GCornerNone);
+      if (!(bits & (1 << (DIGIT_COLS - 1 - gc)))) {
+        continue;
       }
+      GRect cell = GRect(origin.x + gc * s_cell, origin.y + gr * s_cell + y_offset, s_cell, s_cell);
+      if (!clip_to_frontier(&cell, frontier_x, ltr, active)) {
+        continue;
+      }
+      graphics_fill_rect(ctx, cell, 0, GCornerNone);
     }
   }
 }
 
-static void draw_colon(GContext *ctx, GPoint origin, int rows_from_bottom, int y_offset, GColor color) {
-  // Two block dots, clipped to the same printed height as the digits.
-  int printed_px = rows_from_bottom * s_cell;
-  int cut = origin.y + y_offset + s_digit_h - printed_px;
-
+static void draw_colon(GContext *ctx, GPoint origin, int complete_rows, int active_gr,
+                       int frontier_x, bool ltr, int y_offset, GColor color) {
   graphics_context_set_fill_color(ctx, color);
-  GRect dots[2] = {
-    GRect(origin.x, origin.y + 2 * s_cell + y_offset, s_cell, s_cell),
-    GRect(origin.x, origin.y + 4 * s_cell + y_offset, s_cell, s_cell),
-  };
+  const int dot_gr[2] = { 2, 4 };
   for (int i = 0; i < 2; i++) {
-    if (dots[i].origin.y + dots[i].size.h > cut) {
-      int y0 = dots[i].origin.y;
-      if (y0 < cut) {
-        int trim = cut - y0;
-        dots[i].origin.y += trim;
-        dots[i].size.h -= trim;
-      }
-      if (dots[i].size.h > 0) {
-        graphics_fill_rect(ctx, dots[i], 0, GCornerNone);
-      }
+    int gr = dot_gr[i];
+    int from_bottom = DIGIT_ROWS - 1 - gr;
+    bool done = from_bottom < complete_rows;
+    bool active = (gr == active_gr) && complete_rows < DIGIT_ROWS;
+    if (!done && !active) {
+      continue;
     }
+    GRect cell = GRect(origin.x, origin.y + gr * s_cell + y_offset, s_cell, s_cell);
+    if (!clip_to_frontier(&cell, frontier_x, ltr, active)) {
+      continue;
+    }
+    graphics_fill_rect(ctx, cell, 0, GCornerNone);
   }
 }
 
 static void draw_time_block(GContext *ctx, GPoint origin, int hour, int minute,
-                            int rows_from_bottom, int y_offset, GColor color) {
+                            int complete_rows, int active_gr, int frontier_x, bool ltr,
+                            int y_offset, GColor color) {
   int d[4];
   digits_from_time(hour, minute, d);
   int x = origin.x;
   for (int i = 0; i < 4; i++) {
     if (i == 2) {
-      draw_colon(ctx, GPoint(x, origin.y), rows_from_bottom, y_offset, color);
+      draw_colon(ctx, GPoint(x, origin.y), complete_rows, active_gr, frontier_x, ltr, y_offset, color);
       x += s_colon + s_gap;
     }
-    draw_glyph_rows(ctx, GPoint(x, origin.y), d[i], rows_from_bottom, y_offset, color);
+    draw_glyph_rows(ctx, GPoint(x, origin.y), d[i], complete_rows, active_gr,
+                    frontier_x, ltr, y_offset, color);
     x += s_digit_w + s_gap;
   }
 }
@@ -270,22 +302,22 @@ static void draw_bed(GContext *ctx, GRect bed) {
 }
 
 static void draw_nozzle(GContext *ctx, GPoint tip) {
-  // tip is the extrusion point (bottom center). Scales with digit cell size.
-  int s = s_cell >= 6 ? 2 : 1;
+  // tip is the extrusion point (bottom center). Cone tapers DOWN to the tip.
+  int s = nozzle_scale();
   int tip_h = 5 * s;
   int block_w = 9 * s;
   int block_h = 5 * s;
   int fin_w = 11 * s;
   int fin_n = 3;
 
-  // Brass tip (triangle pointing down)
+  // Brass tip: wide under the heat block, point at tip.y
   graphics_context_set_fill_color(ctx, color_brass());
   for (int i = 0; i < tip_h; i++) {
-    int half = (i * (block_w / 2)) / tip_h;
+    int half = ((tip_h - 1 - i) * (block_w / 2)) / (tip_h > 1 ? tip_h - 1 : 1);
     graphics_fill_rect(ctx, GRect(tip.x - half, tip.y - tip_h + i, half * 2 + 1, 1), 0, GCornerNone);
   }
 
-  // Red heat block
+  // Red heat block above the cone
   graphics_context_set_fill_color(ctx, color_heat());
   graphics_fill_rect(ctx,
       GRect(tip.x - block_w / 2, tip.y - tip_h - block_h, block_w, block_h), 0, GCornerNone);
@@ -300,7 +332,8 @@ static void draw_nozzle(GContext *ctx, GPoint tip) {
 
   // Cyan filament path into the hotend
   graphics_context_set_fill_color(ctx, color_filament());
-  graphics_fill_rect(ctx, GRect(tip.x - s / 2, fin_y0 - 5 * s, s > 0 ? s : 1, 5 * s), 0, GCornerNone);
+  int lead = s > 0 ? s : 1;
+  graphics_fill_rect(ctx, GRect(tip.x - lead / 2, fin_y0 - 5 * s, lead, 5 * s), 0, GCornerNone);
 }
 
 static void draw_gantry(GContext *ctx, GRect bed, int top_y) {
@@ -339,13 +372,13 @@ static void draw_frame(Layer *layer, GContext *ctx) {
   int bed_h = BED_H;
   int bed_x = (bounds.size.w - bed_w) / 2;
 
-  // Pack the printer toward the vertical center, using the large digit block.
-  int assembly_h = NOZZLE_ROOM + s_digit_h + 2 + bed_h + CAPTION_H;
+  int nozzle_room = nozzle_stack_h() + 6;
+  int assembly_h = nozzle_room + s_digit_h + 2 + bed_h + CAPTION_H;
   int assembly_top = (bounds.size.h - assembly_h) / 2;
   if (assembly_top < 2) {
     assembly_top = 2;
   }
-  int bed_y = assembly_top + NOZZLE_ROOM + s_digit_h + 2;
+  int bed_y = assembly_top + nozzle_room + s_digit_h + 2;
   GRect bed = GRect(bed_x, bed_y, bed_w, bed_h);
 
   int digit_x = bed_x + (bed_w - block_w) / 2;
@@ -356,18 +389,22 @@ static void draw_frame(Layer *layer, GContext *ctx) {
   draw_bed(ctx, bed);
 
   int progress_pm;
-  int rows;
+  int complete_rows;
   int y_off = 0;
   int hour = s_hour;
   int minute = s_minute;
   bool show_nozzle = true;
+  bool ltr = true;
+  int frontier_x = digit_x + block_w;
+  int active_gr = -1;
+  int nx = digit_x + block_w;
+  int ny = digit_y;
 
   if (s_state == STATE_DROPPING) {
     progress_pm = 1000;
-    rows = DIGIT_ROWS;
+    complete_rows = DIGIT_ROWS;
     hour = s_drop_hour;
     minute = s_drop_minute;
-    // Ease-in fall off the bed (t^2 in integer math)
     int t = s_drop_ms;
     if (t > DROP_MS) {
       t = DROP_MS;
@@ -376,54 +413,47 @@ static void draw_frame(Layer *layer, GContext *ctx) {
     show_nozzle = false;
   } else {
     progress_pm = print_progress_pm();
-    rows = progress_pm * DIGIT_ROWS / 1000;
-    if (rows > DIGIT_ROWS) {
-      rows = DIGIT_ROWS;
+    complete_rows = progress_pm * DIGIT_ROWS / 1000;
+    if (complete_rows > DIGIT_ROWS) {
+      complete_rows = DIGIT_ROWS;
+    }
+
+    if (complete_rows < DIGIT_ROWS) {
+      int row_pm = progress_pm * DIGIT_ROWS - complete_rows * 1000;
+      if (row_pm < 0) {
+        row_pm = 0;
+      }
+      if (row_pm > 1000) {
+        row_pm = 1000;
+      }
+      ltr = (complete_rows % 2) == 0;
+      nx = ltr
+        ? digit_x + row_pm * block_w / 1000
+        : digit_x + block_w - row_pm * block_w / 1000;
+      frontier_x = nx;
+      // Active glyph row counted from the top.
+      active_gr = DIGIT_ROWS - 1 - complete_rows;
+      ny = digit_y + active_gr * s_cell;
     }
   }
 
-  draw_time_block(ctx, GPoint(digit_x, digit_y), hour, minute, rows, y_off, color_filament());
+  draw_time_block(ctx, GPoint(digit_x, digit_y), hour, minute,
+                  complete_rows, active_gr, frontier_x, ltr, y_off, color_filament());
 
-  if (show_nozzle && rows < DIGIT_ROWS) {
-    // Current layer being laid: `rows` complete layers from the bottom; nozzle on the next.
-    int layer = rows;
-    int row_pm = progress_pm * DIGIT_ROWS - rows * 1000; // 0..999 within the layer
-    if (row_pm < 0) {
-      row_pm = 0;
-    }
-    if (row_pm > 1000) {
-      row_pm = 1000;
-    }
-
-    bool ltr = (layer % 2) == 0;
-    int travel = block_w;
-    int nx = ltr
-      ? digit_x + row_pm * travel / 1000
-      : digit_x + travel - row_pm * travel / 1000;
-
-    // Tip sits on the layer being printed (glyph rows counted from the top).
-    int glyph_row_from_top = DIGIT_ROWS - 1 - layer;
-    int ny = digit_y + glyph_row_from_top * s_cell;
+  if (show_nozzle && complete_rows < DIGIT_ROWS) {
     draw_nozzle(ctx, GPoint(nx, ny));
-
-    // Hot filament bead under the tip
-    graphics_context_set_fill_color(ctx, color_filament_hot());
-    int bh = s_cell > 2 ? s_cell / 2 : 1;
-    int bw = s_cell > 2 ? s_cell : 3;
-    graphics_fill_rect(ctx, GRect(nx - bw / 2, ny, bw, bh), 0, GCornerNone);
   } else if (show_nozzle) {
-    // Finished print: park the nozzle at the top-right of the build.
     draw_nozzle(ctx, GPoint(digit_x + block_w, digit_y));
   }
 
-  // Caption under the bed
   graphics_context_set_text_color(ctx, color_caption());
   char caption[32];
   if (s_state == STATE_DROPPING) {
     snprintf(caption, sizeof(caption), "removing part");
   } else {
     int pct = (progress_pm + 5) / 10;
-    snprintf(caption, sizeof(caption), "layer %d/%d  %d%%", rows, DIGIT_ROWS, pct);
+    int layer_shown = complete_rows < DIGIT_ROWS ? complete_rows + 1 : DIGIT_ROWS;
+    snprintf(caption, sizeof(caption), "layer %d/%d  %d%%", layer_shown, DIGIT_ROWS, pct);
   }
   GRect cap = GRect(0, bed_y + bed_h + 2, bounds.size.w, CAPTION_H);
   graphics_draw_text(ctx, caption, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
