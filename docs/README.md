@@ -1,6 +1,3 @@
-# Settings page (GitHub Pages)
+# Docs
 
-This folder is published at https://techjeeper.github.io/Layer-by-Layer/
-
-Keep `docs/index.html` in sync with `config/index.html` (same settings UI).
-Pebble opens the Pages URL so the WebView gets `Content-Type: text/html`.
+Settings now use **Clay** (`@rebble/clay`), bundled in the watchface — no hosted HTML page required.

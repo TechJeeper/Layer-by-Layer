@@ -1,20 +1,33 @@
 {
   "name": "layer-by-layer",
   "author": "caffeinegamer",
-  "version": "1.1.2",
-  "keywords": ["pebble-app", "watchface", "3d-printing"],
+  "version": "1.2.0",
+  "keywords": [
+    "pebble-app",
+    "watchface",
+    "3d-printing"
+  ],
   "private": true,
-  "dependencies": {},
+  "dependencies": {
+    "@rebble/clay": "^1.1.0"
+  },
   "pebble": {
     "displayName": "Layer-by-Layer",
     "uuid": "f6f3e4d3-13eb-4457-ae43-352b20a4ac0c",
     "sdkVersion": "3",
     "enableMultiJS": true,
-    "targetPlatforms": ["emery", "basalt", "diorite", "flint"],
+    "targetPlatforms": [
+      "emery",
+      "basalt",
+      "diorite",
+      "flint"
+    ],
     "watchapp": {
       "watchface": true
     },
-    "capabilities": ["configurable"],
+    "capabilities": [
+      "configurable"
+    ],
     "messageKeys": [
       "TimeFormat",
       "ShowDate",

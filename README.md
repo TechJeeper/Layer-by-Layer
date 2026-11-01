@@ -45,7 +45,7 @@ Put it on the watch by opening the `.pbw` in the Pebble app, or:
 
 ## Settings
 
-Open **Layer-by-Layer → Settings** in the Pebble phone app:
+Open **Layer-by-Layer → Settings** in the Pebble phone app (Clay, works offline):
 
 - **Time format** — System, 12-hour, or 24-hour
 - **Date** — show/hide and format (Sun 1 Nov, 11/1, or ISO)
