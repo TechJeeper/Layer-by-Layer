@@ -1,9 +1,9 @@
 // Layer-by-Layer phone side: opens the settings page and pushes options to the watch.
 //
-// CloudPebble's emulator opens a blank about:blank for data: config URLs, so we
-// serve the page over HTTPS from the GitHub repo (jsDelivr CDN).
+// Config must be served as text/html. GitHub raw / jsDelivr force text/plain for
+// .html (shows as source). GitHub Pages is the reliable host for Pebble settings.
 
-var CONFIG_URL = 'https://cdn.jsdelivr.net/gh/TechJeeper/Layer-by-Layer@main/config/index.html';
+var CONFIG_URL = 'https://techjeeper.github.io/Layer-by-Layer/';
 
 var STORE_KEY = 'lbl.settings';
 
@@ -51,9 +51,9 @@ function sendSettings(cfg) {
 }
 
 function configUrl(cfg) {
-  // Cache-bust so CloudPebble picks up HTML changes after a push.
+  // Cache-bust so clients pick up HTML changes after a push.
   return CONFIG_URL +
-    '?v=1.1.1&cfg=' + encodeURIComponent(JSON.stringify(cfg));
+    '?v=1.1.2&cfg=' + encodeURIComponent(JSON.stringify(cfg));
 }
 
 function parseResponse(response) {
