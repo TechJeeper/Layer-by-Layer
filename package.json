@@ -1,0 +1,29 @@
+{
+  "name": "layer-by-layer",
+  "author": "caffeinegamer",
+  "version": "1.0.0",
+  "keywords": ["pebble-app", "watchface", "3d-printing"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Layer-by-Layer",
+    "uuid": "f6f3e4d3-13eb-4457-ae43-352b20a4ac0c",
+    "sdkVersion": "3",
+    "enableMultiJS": false,
+    "targetPlatforms": ["emery", "basalt", "diorite", "flint"],
+    "watchapp": {
+      "watchface": true
+    },
+    "capabilities": [],
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MENU_ICON",
+          "file": "images/menu_icon.png",
+          "menuIcon": true
+        }
+      ]
+    }
+  }
+}
