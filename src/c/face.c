@@ -301,6 +301,10 @@ static void draw_bed(GContext *ctx, GRect bed) {
       GRect(bed.origin.x + 6, bed.origin.y + bed.size.h - 2, bed.size.w - 12, 3), 0, GCornerNone);
 }
 
+static int rail_thickness(void) {
+  return s_cell >= 6 ? 3 : 2;
+}
+
 static void draw_nozzle(GContext *ctx, GPoint tip) {
   // tip is the extrusion point (bottom center). Cone tapers DOWN to the tip.
   int s = nozzle_scale();
@@ -330,16 +334,16 @@ static void draw_nozzle(GContext *ctx, GPoint tip) {
         GRect(tip.x - fin_w / 2, fin_y0 + i * 2 * s, fin_w, s), 0, GCornerNone);
   }
 
-  // Cyan filament path into the hotend
+  // Short filament stub into the carriage (gantry draws the rest)
   graphics_context_set_fill_color(ctx, color_filament());
   int lead = s > 0 ? s : 1;
-  graphics_fill_rect(ctx, GRect(tip.x - lead / 2, fin_y0 - 5 * s, lead, 5 * s), 0, GCornerNone);
+  graphics_fill_rect(ctx, GRect(tip.x - lead / 2, fin_y0 - 2 * s, lead, 2 * s + 1), 0, GCornerNone);
 }
 
-static void draw_gantry(GContext *ctx, GRect bed, int top_y) {
-  int rail_w = s_cell >= 6 ? 3 : 2;
+static void draw_frame_rails(GContext *ctx, GRect bed, int top_y) {
+  int rail_w = rail_thickness();
 
-  // Vertical rails
+  // Vertical Z rails
   graphics_context_set_fill_color(ctx, color_rail());
   graphics_fill_rect(ctx, GRect(bed.origin.x, top_y, rail_w, bed.origin.y - top_y), 0, GCornerNone);
   graphics_fill_rect(ctx,
@@ -355,6 +359,55 @@ static void draw_gantry(GContext *ctx, GRect bed, int top_y) {
   graphics_context_set_fill_color(ctx, color_heat());
   graphics_fill_rect(ctx,
       GRect(bed.origin.x + bed.size.w - rail_w - 5, top_y + 1, 3, 3), 0, GCornerNone);
+}
+
+// Moving X gantry beam + toolhead carriage at the nozzle's Z height.
+static void draw_z_gantry(GContext *ctx, GRect bed, GPoint tip) {
+  int rail_w = rail_thickness();
+  int s = nozzle_scale();
+  int beam_h = s_cell >= 6 ? 4 : 3;
+  int beam_y = tip.y - nozzle_stack_h();
+  if (beam_y < 0) {
+    beam_y = 0;
+  }
+
+  int inner_x = bed.origin.x + rail_w;
+  int inner_w = bed.size.w - 2 * rail_w;
+
+  // Horizontal X beam spanning the Z rails
+  graphics_context_set_fill_color(ctx, color_crossbar());
+  graphics_fill_rect(ctx, GRect(inner_x, beam_y, inner_w, beam_h), 0, GCornerNone);
+#if defined(PBL_COLOR)
+  graphics_context_set_fill_color(ctx, color_rail());
+  graphics_fill_rect(ctx, GRect(inner_x, beam_y, inner_w, 1), 0, GCornerNone);
+#endif
+
+  // Bearing blocks sliding on the Z rails
+  int zblock_h = beam_h + 6;
+  int zblock_y = beam_y - 2;
+  graphics_context_set_fill_color(ctx, color_bed_surface());
+  graphics_fill_rect(ctx, GRect(bed.origin.x - 1, zblock_y, rail_w + 4, zblock_h), 0, GCornerNone);
+  graphics_fill_rect(ctx,
+      GRect(bed.origin.x + bed.size.w - rail_w - 3, zblock_y, rail_w + 4, zblock_h), 0, GCornerNone);
+#if defined(PBL_COLOR)
+  graphics_context_set_fill_color(ctx, color_rail());
+  graphics_fill_rect(ctx, GRect(bed.origin.x, zblock_y + 2, rail_w, zblock_h - 4), 0, GCornerNone);
+  graphics_fill_rect(ctx,
+      GRect(bed.origin.x + bed.size.w - rail_w, zblock_y + 2, rail_w, zblock_h - 4), 0, GCornerNone);
+#endif
+
+  // Toolhead carriage on the X beam
+  int cw = 13 * s;
+  int carriage_x = tip.x - cw / 2;
+  graphics_context_set_fill_color(ctx, color_rail());
+  graphics_fill_rect(ctx, GRect(carriage_x, beam_y - 2, cw, beam_h + 4), 0, GCornerNone);
+  graphics_context_set_fill_color(ctx, color_bed_surface());
+  graphics_fill_rect(ctx, GRect(carriage_x + 2, beam_y, cw - 4, beam_h), 0, GCornerNone);
+
+  // Filament Bowden stub above the carriage
+  graphics_context_set_fill_color(ctx, color_filament());
+  int lead = s > 0 ? s : 1;
+  graphics_fill_rect(ctx, GRect(tip.x - lead / 2, beam_y - 5 * s, lead, 5 * s), 0, GCornerNone);
 }
 
 static void draw_frame(Layer *layer, GContext *ctx) {
@@ -385,7 +438,7 @@ static void draw_frame(Layer *layer, GContext *ctx) {
   int digit_y = bed_y - s_digit_h - 2;
   int gantry_top = assembly_top;
 
-  draw_gantry(ctx, bed, gantry_top);
+  draw_frame_rails(ctx, bed, gantry_top);
   draw_bed(ctx, bed);
 
   int progress_pm;
@@ -440,10 +493,12 @@ static void draw_frame(Layer *layer, GContext *ctx) {
   draw_time_block(ctx, GPoint(digit_x, digit_y), hour, minute,
                   complete_rows, active_gr, frontier_x, ltr, y_off, color_filament());
 
-  if (show_nozzle && complete_rows < DIGIT_ROWS) {
-    draw_nozzle(ctx, GPoint(nx, ny));
-  } else if (show_nozzle) {
-    draw_nozzle(ctx, GPoint(digit_x + block_w, digit_y));
+  if (show_nozzle) {
+    GPoint tip = (complete_rows < DIGIT_ROWS)
+      ? GPoint(nx, ny)
+      : GPoint(digit_x + block_w, digit_y);
+    draw_z_gantry(ctx, bed, tip);
+    draw_nozzle(ctx, tip);
   }
 
   graphics_context_set_text_color(ctx, color_caption());
